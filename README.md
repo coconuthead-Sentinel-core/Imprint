@@ -45,6 +45,7 @@ launching the GUI.
 | `imprint/models.py` | Pure definitions — methodologies, requirement types, MoSCoW, statuses |
 | `imprint/srs.py` | Render a requirement set as an SRS (.docx), ISO/IEC/IEEE 29148 layout |
 | `imprint/assistant.py` | Embedded local AI assistant (Ollama) — drafts requirements offline |
+| `imprint/traceability.py` | Render requirements as a Traceability Matrix (.xlsx), V-Model view |
 | `imprint_app.py` | Tkinter desktop shell (create project, add/list requirements, generate SRS) |
 
 ## Roadmap
@@ -52,8 +53,10 @@ launching the GUI.
 - ✅ **v0.1** — requirements-as-data core + minimal project/requirement UI
 - ✅ **v0.2** — **SRS (.docx) rendering** from the requirement records (`python-docx`)
 - ✅ **v0.3** — **embedded AI assistant** (local Ollama model, transplanted from Strata) drafts
-  requirements from a rough note *(this build)*
-- 🔲 Traceability matrix / user-story views (`openpyxl` XLSX)
+  requirements from a rough note
+- ✅ **v0.4** — **Traceability Matrix (.xlsx)** — the V-Model view, columns from the Codex
+  Source Library template (`openpyxl`) *(this build)*
+- 🔲 Agile user-story view (the third rendering of the same data)
 - 🔲 Scope-drift **guardrail** (transplanted from Turbo)
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)
 - 🔲 Scope-drift **guardrail** (seeded from the Turbo engine)

@@ -14,7 +14,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from imprint import db, models, srs, assistant
+from imprint import db, models, srs, assistant, traceability
 
 # Larger, readable fonts (accessibility-first, like the Book Reader).
 FONT = ("Segoe UI", 12)
@@ -244,6 +244,9 @@ class ImprintApp(tk.Tk):
         self.gen_srs_btn = ttk.Button(actions, text="📄 Generate SRS (.docx)",
                                       command=self._generate_srs, state="disabled")
         self.gen_srs_btn.grid(row=0, column=1, padx=(8, 0))
+        self.gen_matrix_btn = ttk.Button(actions, text="📊 Traceability Matrix (.xlsx)",
+                                         command=self._generate_matrix, state="disabled")
+        self.gen_matrix_btn.grid(row=0, column=2, padx=(8, 0))
 
     # --- projects ---
     def _refresh_projects(self) -> None:
@@ -274,6 +277,7 @@ class ImprintApp(tk.Tk):
             text=f"{project['name']}  —  {models.methodology_label(project['methodology'])}")
         self.add_req_btn.config(state="normal")
         self.gen_srs_btn.config(state="normal")
+        self.gen_matrix_btn.config(state="normal")
         self._refresh_requirements()
 
     # --- requirements ---
@@ -321,6 +325,31 @@ class ImprintApp(tk.Tk):
         if messagebox.askyesno("SRS generated", f"Saved:\n{out_path}\n\nOpen it now?"):
             try:
                 os.startfile(out_path)  # Windows: open in the default word processor
+            except Exception:
+                pass
+
+    def _generate_matrix(self) -> None:
+        if self.current_project_id is None:
+            return
+        project = db.get_project(self.conn, self.current_project_id)
+        requirements = db.list_requirements(self.conn, self.current_project_id)
+        suggested = traceability.default_matrix_path(project["name"])
+        out_path = filedialog.asksaveasfilename(
+            title="Save Traceability Matrix", defaultextension=".xlsx",
+            initialfile=os.path.basename(suggested),
+            initialdir=os.path.dirname(suggested),
+            filetypes=[("Excel workbook", "*.xlsx")],
+        )
+        if not out_path:
+            return
+        try:
+            traceability.build_traceability_xlsx(project, requirements, out_path)
+        except Exception as e:
+            messagebox.showerror("Could not generate matrix", str(e))
+            return
+        if messagebox.askyesno("Traceability matrix generated", f"Saved:\n{out_path}\n\nOpen it now?"):
+            try:
+                os.startfile(out_path)
             except Exception:
                 pass
 
