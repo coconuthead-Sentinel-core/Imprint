@@ -220,6 +220,39 @@ def list_requirements(conn: sqlite3.Connection, project_id: int) -> list[sqlite3
     ).fetchall()
 
 
+def get_requirement(conn: sqlite3.Connection, req_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM requirements WHERE id = ?", (req_id,)).fetchone()
+
+
+def update_requirement(
+    conn: sqlite3.Connection, req_id: int, req_type: str, statement: str,
+    moscow: str, acceptance_criteria: str = "", source: str = "",
+) -> sqlite3.Row:
+    """Edit a requirement's fields (keeps its key, status, rationale). Returns the row."""
+    statement = (statement or "").strip()
+    if not statement:
+        raise ValueError("Requirement statement is required.")
+    now = _utc_now()
+    with transaction(conn):
+        conn.execute(
+            "UPDATE requirements SET req_type = ?, statement = ?, moscow = ?, "
+            "acceptance_criteria = ?, source = ?, updated_at = ? WHERE id = ?",
+            (req_type, statement, moscow, acceptance_criteria.strip(), source.strip(), now, req_id),
+        )
+    return get_requirement(conn, req_id)
+
+
+def delete_requirement(conn: sqlite3.Connection, req_id: int) -> None:
+    with transaction(conn):
+        conn.execute("DELETE FROM requirements WHERE id = ?", (req_id,))
+
+
+def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
+    """Delete a project and everything under it (requirements, chat, baselines cascade)."""
+    with transaction(conn):
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
+
 def set_requirement_status(conn: sqlite3.Connection, req_id: int, status: str) -> None:
     """Update one requirement's status (e.g. 'draft' <-> 'baselined' = checked off)."""
     if status not in models.REQ_STATUSES:

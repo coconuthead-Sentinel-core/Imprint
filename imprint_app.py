@@ -84,9 +84,9 @@ class ProjectDialog(tk.Toplevel):
 class RequirementDialog(tk.Toplevel):
     """Modal 'Add Requirement' form."""
 
-    def __init__(self, parent, req_assistant=None):
+    def __init__(self, parent, req_assistant=None, initial=None):
         super().__init__(parent)
-        self.title("Add Requirement")
+        self.title("Edit Requirement" if initial else "Add Requirement")
         self.resizable(False, False)
         self.result: dict | None = None
         self.assistant = req_assistant
@@ -131,6 +131,13 @@ class RequirementDialog(tk.Toplevel):
         btns.grid(row=9, column=0, columnspan=2, sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).grid(row=0, column=0, padx=4)
         ttk.Button(btns, text="Save", command=self._on_save).grid(row=0, column=1)
+
+        if initial:  # editing an existing requirement — pre-fill the form
+            self.statement.insert("1.0", initial.get("statement", ""))
+            self.type_var.set(initial.get("req_type", models.REQ_TYPES[0]))
+            self.moscow_var.set(initial.get("moscow", models.MOSCOW[0]))
+            self.accept.insert("1.0", initial.get("acceptance_criteria", ""))
+            self.source_var.set(initial.get("source", ""))
 
     # --- assistant: draft the requirement from the rough note, off the UI thread ---
     def _draft(self) -> None:
@@ -308,6 +315,9 @@ class ImprintApp(tk.Tk):
         self.projects_list.bind("<<ListboxSelect>>", self._on_project_select)
         ttk.Button(left, text="+ New Project", command=self._new_project).grid(
             row=1, column=0, sticky="ew", pady=(8, 0))
+        self.del_project_btn = ttk.Button(left, text="🗑 Delete Project",
+                                          command=self._delete_project, state="disabled")
+        self.del_project_btn.grid(row=2, column=0, sticky="ew", pady=(4, 0))
 
         # --- right: requirements ---
         right = ttk.LabelFrame(body, text="Requirements", padding=8)
@@ -324,8 +334,8 @@ class ImprintApp(tk.Tk):
             self.req_tree.heading(c, text=c.capitalize())
             self.req_tree.column(c, width=w, anchor="w")
         self.req_tree.grid(row=1, column=0, sticky="nsew")
-        # Double-click a row to check it off (draft <-> baselined).
-        self.req_tree.bind("<Double-1>", lambda _e: self._toggle_baseline())
+        # Double-click a row to edit that requirement.
+        self.req_tree.bind("<Double-1>", lambda _e: self._edit_requirement())
         vs = ttk.Scrollbar(right, orient="vertical", command=self.req_tree.yview)
         self.req_tree.configure(yscrollcommand=vs.set)
         vs.grid(row=1, column=1, sticky="ns")
@@ -350,6 +360,12 @@ class ImprintApp(tk.Tk):
         self.guard_btn = ttk.Button(actions, text="🛡 Scope Guard",
                                     command=self._scope_guard, state="disabled")
         self.guard_btn.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.edit_req_btn = ttk.Button(actions, text="✏ Edit requirement",
+                                       command=self._edit_requirement, state="disabled")
+        self.edit_req_btn.grid(row=1, column=1, padx=(8, 0), pady=(6, 0))
+        self.delete_req_btn = ttk.Button(actions, text="🗑 Delete requirement",
+                                         command=self._delete_requirement, state="disabled")
+        self.delete_req_btn.grid(row=1, column=2, padx=(8, 0), pady=(6, 0))
 
     # --- assistant conversation panel ---
     def _build_assistant(self) -> ttk.LabelFrame:
@@ -538,6 +554,9 @@ class ImprintApp(tk.Tk):
         self.gen_stories_btn.config(state="normal")
         self.baseline_btn.config(state="normal")
         self.guard_btn.config(state="normal")
+        self.edit_req_btn.config(state="normal")
+        self.delete_req_btn.config(state="normal")
+        self.del_project_btn.config(state="normal")
         self._refresh_requirements()
         self._load_conversation()  # per-project saved conversation resumes here
 
@@ -590,6 +609,81 @@ class ImprintApp(tk.Tk):
                 messagebox.showerror("Could not add requirement", str(e))
                 return
             self._refresh_requirements()
+
+    def _selected_req_ids(self) -> list[int]:
+        return [int(iid) for iid in self.req_tree.selection()]
+
+    def _edit_requirement(self) -> None:
+        ids = self._selected_req_ids()
+        if not ids:
+            messagebox.showinfo("No selection", "Select a requirement to edit.")
+            return
+        row = db.get_requirement(self.conn, ids[0])
+        if row is None:
+            return
+        initial = {
+            "statement": row["statement"], "req_type": row["req_type"],
+            "moscow": row["moscow"], "acceptance_criteria": row["acceptance_criteria"],
+            "source": row["source"],
+        }
+        dlg = RequirementDialog(self, self.assistant, initial=initial)
+        self.wait_window(dlg)
+        if dlg.result:
+            try:
+                db.update_requirement(
+                    self.conn, ids[0], dlg.result["req_type"], dlg.result["statement"],
+                    dlg.result["moscow"], dlg.result["acceptance_criteria"], dlg.result["source"])
+            except ValueError as e:
+                messagebox.showerror("Could not update requirement", str(e))
+                return
+            self._refresh_requirements()
+
+    def _delete_requirement(self) -> None:
+        ids = self._selected_req_ids()
+        if not ids:
+            messagebox.showinfo("No selection", "Select requirement(s) to delete.")
+            return
+        if not messagebox.askyesno(
+                "Delete requirement(s)",
+                f"Delete {len(ids)} requirement(s)? This can't be undone."):
+            return
+        for rid in ids:
+            db.delete_requirement(self.conn, rid)
+        self._refresh_requirements()
+
+    def _delete_project(self) -> None:
+        if self.current_project_id is None:
+            return
+        project = db.get_project(self.conn, self.current_project_id)
+        if not messagebox.askyesno(
+                "Delete project",
+                f"Delete project '{project['name']}' and ALL its requirements, "
+                "conversation, and baselines? This can't be undone."):
+            return
+        db.delete_project(self.conn, self.current_project_id)
+        self.current_project_id = None
+        self._refresh_projects()
+        self._reset_to_no_project()
+
+    def _reset_to_no_project(self) -> None:
+        """Return the UI to its 'nothing selected' state (after deleting a project)."""
+        self.project_header.config(text="Select or create a project.")
+        for item in self.req_tree.get_children():
+            self.req_tree.delete(item)
+        for btn in (self.add_req_btn, self.gen_srs_btn, self.gen_matrix_btn,
+                    self.gen_stories_btn, self.baseline_btn, self.guard_btn,
+                    self.edit_req_btn, self.delete_req_btn, self.del_project_btn,
+                    self.save_reply_btn, self.clear_chat_btn):
+            btn.config(state="disabled")
+        self._clear_chat_log()
+        self.chat_history = []
+        self._last_reply = ""
+        self.chat_input.config(state="disabled")
+        self.send_btn.config(state="disabled")
+        if self.assistant.available:
+            self._chat_append("Assistant",
+                              "Select or create a project, then tell me about it — "
+                              "I'll help draft requirements and remember our conversation.")
 
     def _generate_srs(self) -> None:
         if self.current_project_id is None:

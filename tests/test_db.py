@@ -86,6 +86,40 @@ class TestImprintDb(unittest.TestCase):
         after = len(db.list_requirements(self.conn, pid))
         self.assertEqual(before, after)  # both inserts rolled back together
 
+    def test_update_requirement(self):
+        pid = db.create_project(self.conn, "P", "waterfall")
+        r = db.add_requirement(self.conn, pid, "Functional", "The system shall do X.", moscow="Could")
+        updated = db.update_requirement(self.conn, r["id"], "Non-Functional",
+                                        "The system shall do X better.", "Must", "criteria here")
+        self.assertEqual(updated["statement"], "The system shall do X better.")
+        self.assertEqual(updated["req_type"], "Non-Functional")
+        self.assertEqual(updated["moscow"], "Must")
+        self.assertEqual(updated["req_key"], r["req_key"])  # key preserved on edit
+
+    def test_update_requirement_rejects_blank(self):
+        pid = db.create_project(self.conn, "P", "agile")
+        r = db.add_requirement(self.conn, pid, "Functional", "The system shall exist.")
+        with self.assertRaises(ValueError):
+            db.update_requirement(self.conn, r["id"], "Functional", "   ", "Must")
+
+    def test_delete_requirement(self):
+        pid = db.create_project(self.conn, "P", "vmodel")
+        r = db.add_requirement(self.conn, pid, "Functional", "The system shall vanish.")
+        db.delete_requirement(self.conn, r["id"])
+        self.assertEqual(len(db.list_requirements(self.conn, pid)), 0)
+
+    def test_delete_project_cascades(self):
+        pid = db.create_project(self.conn, "Doomed", "agile")
+        db.add_requirement(self.conn, pid, "Functional", "The system shall be deleted.")
+        db.add_chat_message(self.conn, pid, "user", "hi")
+        db.lock_baseline(self.conn, pid)
+        db.delete_project(self.conn, pid)
+        self.assertIsNone(db.get_project(self.conn, pid))
+        # children gone too (ON DELETE CASCADE + foreign_keys ON)
+        self.assertEqual(len(db.list_requirements(self.conn, pid)), 0)
+        self.assertEqual(len(db.list_chat_messages(self.conn, pid)), 0)
+        self.assertIsNone(db.get_latest_baseline(self.conn, pid))
+
     def test_set_requirement_status(self):
         pid = db.create_project(self.conn, "P", "waterfall")
         r = db.add_requirement(self.conn, pid, "Functional", "The system shall do a thing.")

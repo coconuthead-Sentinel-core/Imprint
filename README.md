@@ -4,7 +4,7 @@
 > document. Imprint fills out your software-project paperwork (SRS and the rest of the
 > lifecycle documents) for you — 100% on your laptop, no cloud, no server, no API keys.
 
-![Status](https://img.shields.io/badge/status-v0.1%20scaffold-blue)
+![Status](https://img.shields.io/badge/status-v1.0-success)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4.svg)
 
@@ -67,7 +67,9 @@ launching the GUI.
 - ✅ **v0.8** — **Agile user-story view** (.docx) — the third rendering; requirements become
   "As a user, I want… so that…" stories grouped by MoSCoW priority
 - ✅ **v0.9** — **Scope Guard** (concept transplanted from Turbo) — lock a baseline, then detect
-  scope drift (added / removed / changed) with GREEN / YELLOW / RED zones *(this build)*
+  scope drift (added / removed / changed) with GREEN / YELLOW / RED zones
+- ✅ **v1.0** — **full CRUD**: edit & delete requirements (double-click to edit), delete a project
+  (cascades its requirements, conversation, and baselines) *(this build)*
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)
 - 🔲 Scope-drift **guardrail** (seeded from the Turbo engine)
 - 🔲 Embedded **local AI assistant** (shared local model via Ollama, seeded from Strata)
