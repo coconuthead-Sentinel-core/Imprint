@@ -56,6 +56,23 @@ class TestAssistantParsing(unittest.TestCase):
         self.assertEqual(assistant.extract_requirement("just some text"), "just some text")
         self.assertEqual(assistant.extract_requirement(""), "")
 
+    def test_extract_requirements_captures_all(self):
+        reply = (
+            "Here's what I've got so far:\n"
+            "The system shall automatically generate the SDLC paperwork.\n"
+            "The system shall allow users to update the paperwork as needed.\n"
+            "The system shall track progress across Agile and Waterfall.\n"
+            "Anything else?"
+        )
+        got = assistant.extract_requirements(reply)
+        self.assertEqual(len(got), 3)
+        self.assertTrue(all(s.startswith("The system shall") and s.endswith(".") for s in got))
+
+    def test_extract_requirements_dedupes(self):
+        reply = ("The system shall log in users.\n"
+                 "The system shall log in users\n")  # same, one has no period
+        self.assertEqual(len(assistant.extract_requirements(reply)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

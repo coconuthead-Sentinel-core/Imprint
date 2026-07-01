@@ -86,6 +86,20 @@ class TestImprintDb(unittest.TestCase):
         after = len(db.list_requirements(self.conn, pid))
         self.assertEqual(before, after)  # both inserts rolled back together
 
+    def test_set_requirement_status(self):
+        pid = db.create_project(self.conn, "P", "waterfall")
+        r = db.add_requirement(self.conn, pid, "Functional", "The system shall do a thing.")
+        self.assertEqual(r["status"], "draft")
+        db.set_requirement_status(self.conn, r["id"], "baselined")
+        again = db.list_requirements(self.conn, pid)[0]
+        self.assertEqual(again["status"], "baselined")
+
+    def test_set_requirement_status_rejects_bad_value(self):
+        pid = db.create_project(self.conn, "P", "agile")
+        r = db.add_requirement(self.conn, pid, "Functional", "The system shall exist.")
+        with self.assertRaises(ValueError):
+            db.set_requirement_status(self.conn, r["id"], "done-ish")
+
     def test_models_vocabulary(self):
         self.assertTrue(models.is_valid_methodology("agile"))
         self.assertFalse(models.is_valid_methodology("scrumban"))

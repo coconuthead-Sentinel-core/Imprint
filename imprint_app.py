@@ -179,6 +179,38 @@ class RequirementDialog(tk.Toplevel):
         self.destroy()
 
 
+class SaveRequirementsDialog(tk.Toplevel):
+    """Checklist to pick which of the assistant's proposed requirements to save."""
+
+    def __init__(self, parent, statements: list[str]):
+        super().__init__(parent)
+        self.title("Save requirements")
+        self.result: list[str] | None = None
+        self.transient(parent)
+        self.grab_set()
+
+        frm = ttk.Frame(self, padding=16)
+        frm.grid(sticky="nsew")
+        ttk.Label(frm, text="The assistant proposed these. Check the ones to save:",
+                  font=FONT_BOLD).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.vars: list[tuple[tk.BooleanVar, str]] = []
+        for i, s in enumerate(statements, start=1):
+            var = tk.BooleanVar(value=True)  # all checked by default
+            ttk.Checkbutton(frm, text=s, variable=var, wraplength=560).grid(
+                row=i, column=0, sticky="w", pady=2)
+            self.vars.append((var, s))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(statements) + 1, column=0, sticky="e", pady=(12, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).grid(row=0, column=0, padx=4)
+        ttk.Button(btns, text="Save checked", command=self._on_save).grid(row=0, column=1)
+
+    def _on_save(self) -> None:
+        self.result = [s for var, s in self.vars if var.get()]
+        self.destroy()
+
+
 class ImprintApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -231,12 +263,14 @@ class ImprintApp(tk.Tk):
         self.project_header = ttk.Label(right, text="Select or create a project.", font=FONT_BOLD)
         self.project_header.grid(row=0, column=0, sticky="w", pady=(0, 6))
 
-        cols = ("key", "type", "priority", "statement")
+        cols = ("key", "type", "priority", "status", "statement")
         self.req_tree = ttk.Treeview(right, columns=cols, show="headings", height=14)
-        for c, w in zip(cols, (90, 130, 90, 520)):
+        for c, w in zip(cols, (85, 120, 80, 110, 430)):
             self.req_tree.heading(c, text=c.capitalize())
             self.req_tree.column(c, width=w, anchor="w")
         self.req_tree.grid(row=1, column=0, sticky="nsew")
+        # Double-click a row to check it off (draft <-> baselined).
+        self.req_tree.bind("<Double-1>", lambda _e: self._toggle_baseline())
         vs = ttk.Scrollbar(right, orient="vertical", command=self.req_tree.yview)
         self.req_tree.configure(yscrollcommand=vs.set)
         vs.grid(row=1, column=1, sticky="ns")
@@ -252,6 +286,9 @@ class ImprintApp(tk.Tk):
         self.gen_matrix_btn = ttk.Button(actions, text="📊 Traceability Matrix (.xlsx)",
                                          command=self._generate_matrix, state="disabled")
         self.gen_matrix_btn.grid(row=0, column=2, padx=(8, 0))
+        self.baseline_btn = ttk.Button(actions, text="✓ Baseline / un-baseline",
+                                       command=self._toggle_baseline, state="disabled")
+        self.baseline_btn.grid(row=0, column=3, padx=(8, 0))
 
     # --- assistant conversation panel ---
     def _build_assistant(self) -> ttk.LabelFrame:
@@ -325,18 +362,35 @@ class ImprintApp(tk.Tk):
     def _save_reply_as_req(self) -> None:
         if not self._last_reply or self.current_project_id is None:
             return
-        statement = assistant.extract_requirement(self._last_reply)
-        if not statement:
+        statements = assistant.extract_requirements(self._last_reply)
+        if not statements:  # no canonical line — fall back to the single-line grab
+            one = assistant.extract_requirement(self._last_reply)
+            statements = [one] if one else []
+        if not statements:
             messagebox.showinfo("Nothing to save",
                                 "The assistant's last reply didn't contain a clear requirement.")
             return
-        try:
-            row = db.add_requirement(self.conn, self.current_project_id, "Functional", statement)
-        except ValueError as e:
-            messagebox.showerror("Could not add requirement", str(e))
-            return
+
+        # One requirement saves straight away; several open the checkbox picker.
+        if len(statements) == 1:
+            chosen = statements
+        else:
+            dlg = SaveRequirementsDialog(self, statements)
+            self.wait_window(dlg)
+            chosen = dlg.result
+            if not chosen:
+                return
+
+        saved = []
+        for statement in chosen:
+            try:
+                row = db.add_requirement(self.conn, self.current_project_id, "Functional", statement)
+                saved.append(row["req_key"])
+            except ValueError:
+                pass
         self._refresh_requirements()
-        self._chat_append("Imprint", f"✓ Saved {row['req_key']}: {statement}")
+        if saved:
+            self._chat_append("Imprint", f"✓ Saved {len(saved)} requirement(s): {', '.join(saved)}")
 
     # --- projects ---
     def _refresh_projects(self) -> None:
@@ -368,19 +422,41 @@ class ImprintApp(tk.Tk):
         self.add_req_btn.config(state="normal")
         self.gen_srs_btn.config(state="normal")
         self.gen_matrix_btn.config(state="normal")
+        self.baseline_btn.config(state="normal")
         if self._last_reply:
             self.save_reply_btn.config(state="normal")
         self._refresh_requirements()
 
     # --- requirements ---
+    @staticmethod
+    def _status_display(status: str) -> str:
+        # A clear check-off indicator so nothing looks half-done.
+        return "✓ baselined" if status == "baselined" else status
+
     def _refresh_requirements(self) -> None:
         for item in self.req_tree.get_children():
             self.req_tree.delete(item)
         if self.current_project_id is None:
             return
         for r in db.list_requirements(self.conn, self.current_project_id):
-            self.req_tree.insert("", "end", values=(
-                r["req_key"], r["req_type"], r["moscow"], r["statement"]))
+            # iid = requirement id, so a double-click / button can look it up.
+            self.req_tree.insert("", "end", iid=str(r["id"]), values=(
+                r["req_key"], r["req_type"], r["moscow"],
+                self._status_display(r["status"]), r["statement"]))
+
+    def _toggle_baseline(self) -> None:
+        """Check off (baseline) or un-check the selected requirement(s)."""
+        selection = self.req_tree.selection()
+        if not selection:
+            return
+        for iid in selection:
+            row = self.conn.execute(
+                "SELECT status FROM requirements WHERE id = ?", (int(iid),)).fetchone()
+            if row is None:
+                continue
+            new_status = "draft" if row["status"] == "baselined" else "baselined"
+            db.set_requirement_status(self.conn, int(iid), new_status)
+        self._refresh_requirements()
 
     def _add_requirement(self) -> None:
         if self.current_project_id is None:

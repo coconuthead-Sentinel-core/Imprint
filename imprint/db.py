@@ -196,3 +196,15 @@ def list_requirements(conn: sqlite3.Connection, project_id: int) -> list[sqlite3
         "SELECT * FROM requirements WHERE project_id = ? ORDER BY req_key",
         (project_id,),
     ).fetchall()
+
+
+def set_requirement_status(conn: sqlite3.Connection, req_id: int, status: str) -> None:
+    """Update one requirement's status (e.g. 'draft' <-> 'baselined' = checked off)."""
+    if status not in models.REQ_STATUSES:
+        raise ValueError(f"Unknown status: {status!r}")
+    now = _utc_now()
+    with transaction(conn):
+        conn.execute(
+            "UPDATE requirements SET status = ?, updated_at = ? WHERE id = ?",
+            (status, now, req_id),
+        )

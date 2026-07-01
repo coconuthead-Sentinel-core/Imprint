@@ -57,7 +57,9 @@ launching the GUI.
 - ✅ **v0.4** — **Traceability Matrix (.xlsx)** — the V-Model view, columns from the Codex
   Source Library template (`openpyxl`) *(this build)*
 - ✅ **v0.5** — **Assistant conversation panel** — talk to the local model in the main window;
-  it helps draft requirements and you save its replies straight into the project *(this build)*
+  it helps draft requirements and you save its replies straight into the project
+- ✅ **v0.6** — **multi-requirement save** (checkbox picker captures every "The system shall…"
+  line in a reply) + **Status column & baseline check-off** (double-click or button) *(this build)*
 - 🔲 Agile user-story view (the third rendering of the same data)
 - 🔲 Scope-drift **guardrail** (transplanted from Turbo)
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)

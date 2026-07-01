@@ -47,15 +47,28 @@ def parse_draft(reply: str) -> dict:
     return {"statement": statement, "acceptance_criteria": criteria}
 
 
-def extract_requirement(text: str) -> str:
-    """Pull a 'The system shall ...' line out of a chat reply (pure, testable).
+def extract_requirements(text: str) -> list[str]:
+    """Every 'The system shall ...' line in a reply, in order, de-duplicated (pure).
 
-    Falls back to the first non-empty line if no canonical form is present.
+    A single assistant reply often proposes several requirements at once; this
+    returns all of them so none get left behind when saving.
     """
+    out, seen = [], set()
     for raw in (text or "").splitlines():
         line = raw.strip().lstrip("-*0123456789. ").strip()
         if line.lower().startswith("the system shall"):
-            return line.rstrip(".") + "." if not line.endswith(".") else line
+            statement = line if line.endswith(".") else line + "."
+            if statement.lower() not in seen:
+                seen.add(statement.lower())
+                out.append(statement)
+    return out
+
+
+def extract_requirement(text: str) -> str:
+    """The first requirement in a reply, or the first non-empty line as a fallback."""
+    items = extract_requirements(text)
+    if items:
+        return items[0]
     for raw in (text or "").splitlines():
         if raw.strip():
             return raw.strip()
