@@ -9,10 +9,11 @@ Run:  py -3 imprint_app.py
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
-from imprint import db, models
+from imprint import db, models, srs
 
 # Larger, readable fonts (accessibility-first, like the Book Reader).
 FONT = ("Segoe UI", 12)
@@ -191,9 +192,14 @@ class ImprintApp(tk.Tk):
         self.req_tree.configure(yscrollcommand=vs.set)
         vs.grid(row=1, column=1, sticky="ns")
 
-        self.add_req_btn = ttk.Button(right, text="+ Add Requirement",
+        actions = ttk.Frame(right)
+        actions.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.add_req_btn = ttk.Button(actions, text="+ Add Requirement",
                                       command=self._add_requirement, state="disabled")
-        self.add_req_btn.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.add_req_btn.grid(row=0, column=0)
+        self.gen_srs_btn = ttk.Button(actions, text="📄 Generate SRS (.docx)",
+                                      command=self._generate_srs, state="disabled")
+        self.gen_srs_btn.grid(row=0, column=1, padx=(8, 0))
 
     # --- projects ---
     def _refresh_projects(self) -> None:
@@ -223,6 +229,7 @@ class ImprintApp(tk.Tk):
         self.project_header.config(
             text=f"{project['name']}  —  {models.methodology_label(project['methodology'])}")
         self.add_req_btn.config(state="normal")
+        self.gen_srs_btn.config(state="normal")
         self._refresh_requirements()
 
     # --- requirements ---
@@ -247,6 +254,31 @@ class ImprintApp(tk.Tk):
                 messagebox.showerror("Could not add requirement", str(e))
                 return
             self._refresh_requirements()
+
+    def _generate_srs(self) -> None:
+        if self.current_project_id is None:
+            return
+        project = db.get_project(self.conn, self.current_project_id)
+        requirements = db.list_requirements(self.conn, self.current_project_id)
+        suggested = srs.default_output_path(project["name"])
+        out_path = filedialog.asksaveasfilename(
+            title="Save SRS", defaultextension=".docx",
+            initialfile=os.path.basename(suggested),
+            initialdir=os.path.dirname(suggested),
+            filetypes=[("Word document", "*.docx")],
+        )
+        if not out_path:
+            return
+        try:
+            srs.build_srs(project, requirements, out_path)
+        except Exception as e:  # rendering failure shouldn't crash the app
+            messagebox.showerror("Could not generate SRS", str(e))
+            return
+        if messagebox.askyesno("SRS generated", f"Saved:\n{out_path}\n\nOpen it now?"):
+            try:
+                os.startfile(out_path)  # Windows: open in the default word processor
+            except Exception:
+                pass
 
 
 def main() -> None:
