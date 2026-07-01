@@ -1,0 +1,12 @@
+# Imprint — local data and Python cruft
+data/
+*.db
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+*.spec
+.vs/
+.vscode/
