@@ -47,6 +47,21 @@ def parse_draft(reply: str) -> dict:
     return {"statement": statement, "acceptance_criteria": criteria}
 
 
+def extract_requirement(text: str) -> str:
+    """Pull a 'The system shall ...' line out of a chat reply (pure, testable).
+
+    Falls back to the first non-empty line if no canonical form is present.
+    """
+    for raw in (text or "").splitlines():
+        line = raw.strip().lstrip("-*0123456789. ").strip()
+        if line.lower().startswith("the system shall"):
+            return line.rstrip(".") + "." if not line.endswith(".") else line
+    for raw in (text or "").splitlines():
+        if raw.strip():
+            return raw.strip()
+    return ""
+
+
 class RequirementAssistant:
     """Wraps the local model for requirement drafting. Mirrors Strata's LLMBrain."""
 
@@ -112,6 +127,36 @@ class RequirementAssistant:
                 options={"temperature": 0.3, "num_predict": 256, "num_ctx": self.num_ctx},
             )
             return parse_draft(resp["message"]["content"])
+        except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
+            return None
+
+    def _chat_system(self, project_name: str, methodology: str) -> str:
+        ctx = f" for the project '{project_name}'" if project_name else ""
+        method = f" The team is using the {methodology} methodology." if methodology else ""
+        return (
+            "You are Imprint's requirements assistant, running fully offline on the user's "
+            f"computer. You help the user capture and refine the software requirements{ctx}.{method} "
+            "Ask focused questions, one at a time, to draw out what the system must do. "
+            "When a requirement becomes clear, state it on its own line in the form "
+            "'The system shall ...' so it can be saved to the project. Keep replies short and concrete."
+        )
+
+    def chat(self, history: list[dict], project_name: str = "", methodology: str = "") -> str | None:
+        """Continue a conversation. `history` is [{role, content}, ...]; returns the reply or None."""
+        if not self.available:
+            return None
+        # Trim to the most recent turns so the small context window isn't overrun.
+        recent = list(history)[-12:]
+        messages = [{"role": "system", "content": self._chat_system(project_name, methodology)}] + recent
+        try:
+            resp = ollama.chat(
+                model=self.model,
+                messages=messages,
+                keep_alive=self.keep_alive,
+                options={"temperature": 0.5, "num_predict": 400, "num_ctx": self.num_ctx},
+            )
+            return resp["message"]["content"].strip()
         except Exception as e:
             self.last_error = f"{type(e).__name__}: {e}"
             return None

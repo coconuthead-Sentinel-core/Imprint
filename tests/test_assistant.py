@@ -38,11 +38,23 @@ class TestAssistantParsing(unittest.TestCase):
         self.assertEqual(out["statement"], "")
 
     def test_unavailable_assistant_returns_none(self):
-        # Force the unavailable path — draft_requirement must degrade, not raise.
+        # Force the unavailable path — draft_requirement/chat must degrade, not raise.
         a = assistant.RequirementAssistant.__new__(assistant.RequirementAssistant)
         a.available = False
         a.model = "x"
         self.assertIsNone(a.draft_requirement("some note"))
+        self.assertIsNone(a.chat([{"role": "user", "content": "hi"}]))
+
+    def test_extract_requirement_finds_canonical_line(self):
+        reply = ("Good question. Here's one:\n"
+                 "The system shall let a user reset their password by email\n"
+                 "Want me to add it?")
+        got = assistant.extract_requirement(reply)
+        self.assertEqual(got, "The system shall let a user reset their password by email.")
+
+    def test_extract_requirement_falls_back_to_first_line(self):
+        self.assertEqual(assistant.extract_requirement("just some text"), "just some text")
+        self.assertEqual(assistant.extract_requirement(""), "")
 
 
 if __name__ == "__main__":

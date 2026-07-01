@@ -183,14 +183,16 @@ class ImprintApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Imprint {getattr(__import__('imprint'), '__version__', '')} — SDLC Paperwork, Local")
-        self.geometry("1040x660")
-        self.minsize(880, 560)
+        self.geometry("1040x820")
+        self.minsize(900, 640)
 
         self.conn = db.connect()
         db.init_schema(self.conn)
         self.current_project_id: int | None = None
         # One shared local assistant (checks Ollama once); reused by every dialog.
         self.assistant = assistant.RequirementAssistant()
+        self.chat_history: list[dict] = []
+        self._last_reply: str = ""
 
         self._build_ui()
         self._refresh_projects()
@@ -199,6 +201,9 @@ class ImprintApp(tk.Tk):
         ttk.Label(self, text="Imprint", font=FONT_TITLE).pack(anchor="w", padx=16, pady=(12, 0))
         ttk.Label(self, text="Local-first SDLC paperwork — your requirements, stored once.",
                   font=FONT).pack(anchor="w", padx=16, pady=(0, 8))
+
+        # Assistant docks at the bottom (packed first so 'bottom' wins the cavity).
+        self._build_assistant().pack(side="bottom", fill="x", padx=16, pady=(0, 12))
 
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=16, pady=8)
@@ -248,6 +253,91 @@ class ImprintApp(tk.Tk):
                                          command=self._generate_matrix, state="disabled")
         self.gen_matrix_btn.grid(row=0, column=2, padx=(8, 0))
 
+    # --- assistant conversation panel ---
+    def _build_assistant(self) -> ttk.LabelFrame:
+        panel = ttk.LabelFrame(
+            self, text="🤖 Assistant — describe your project; I'll help draft requirements", padding=8)
+        panel.columnconfigure(0, weight=1)
+
+        self.chat_log = tk.Text(panel, font=FONT, height=9, wrap="word", state="disabled",
+                                background="#f6f7f9")
+        self.chat_log.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        cs = ttk.Scrollbar(panel, orient="vertical", command=self.chat_log.yview)
+        self.chat_log.configure(yscrollcommand=cs.set)
+        cs.grid(row=0, column=3, sticky="ns")
+
+        self.chat_input = ttk.Entry(panel, font=FONT)
+        self.chat_input.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.chat_input.bind("<Return>", lambda _e: self._chat_send())
+        self.send_btn = ttk.Button(panel, text="Send", command=self._chat_send)
+        self.send_btn.grid(row=1, column=1, padx=(8, 0), pady=(8, 0))
+        self.save_reply_btn = ttk.Button(panel, text="➕ Save reply as requirement",
+                                         command=self._save_reply_as_req, state="disabled")
+        self.save_reply_btn.grid(row=1, column=2, padx=(8, 0), pady=(8, 0))
+
+        if self.assistant.available:
+            self._chat_append("Assistant",
+                              "Hi! Tell me about your project and what it needs to do, "
+                              "and I'll help turn it into requirements.")
+        else:
+            self._chat_append("Assistant",
+                              f"(offline: {self.assistant.last_error}) "
+                              "You can still add requirements manually.")
+            self.chat_input.config(state="disabled")
+            self.send_btn.config(state="disabled")
+        return panel
+
+    def _chat_append(self, who: str, text: str) -> None:
+        self.chat_log.config(state="normal")
+        self.chat_log.insert("end", f"{who}: {text}\n\n")
+        self.chat_log.config(state="disabled")
+        self.chat_log.see("end")
+
+    def _chat_send(self) -> None:
+        msg = self.chat_input.get().strip()
+        if not msg or not self.assistant.available:
+            return
+        self.chat_input.delete(0, "end")
+        self._chat_append("You", msg)
+        self.chat_history.append({"role": "user", "content": msg})
+        self.send_btn.config(state="disabled", text="Thinking…")
+
+        project = db.get_project(self.conn, self.current_project_id) if self.current_project_id else None
+        pname = project["name"] if project else ""
+        method = models.methodology_label(project["methodology"]) if project else ""
+
+        def worker():
+            reply = self.assistant.chat(self.chat_history, pname, method)
+            self.after(0, lambda: self._chat_receive(reply))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _chat_receive(self, reply) -> None:
+        self.send_btn.config(state="normal", text="Send")
+        if not reply:
+            self._chat_append("Assistant", f"(couldn't reach the model: {self.assistant.last_error})")
+            return
+        self._last_reply = reply
+        self.chat_history.append({"role": "assistant", "content": reply})
+        self._chat_append("Assistant", reply)
+        self.save_reply_btn.config(state="normal" if self.current_project_id else "disabled")
+
+    def _save_reply_as_req(self) -> None:
+        if not self._last_reply or self.current_project_id is None:
+            return
+        statement = assistant.extract_requirement(self._last_reply)
+        if not statement:
+            messagebox.showinfo("Nothing to save",
+                                "The assistant's last reply didn't contain a clear requirement.")
+            return
+        try:
+            row = db.add_requirement(self.conn, self.current_project_id, "Functional", statement)
+        except ValueError as e:
+            messagebox.showerror("Could not add requirement", str(e))
+            return
+        self._refresh_requirements()
+        self._chat_append("Imprint", f"✓ Saved {row['req_key']}: {statement}")
+
     # --- projects ---
     def _refresh_projects(self) -> None:
         self.projects_list.delete(0, "end")
@@ -278,6 +368,8 @@ class ImprintApp(tk.Tk):
         self.add_req_btn.config(state="normal")
         self.gen_srs_btn.config(state="normal")
         self.gen_matrix_btn.config(state="normal")
+        if self._last_reply:
+            self.save_reply_btn.config(state="normal")
         self._refresh_requirements()
 
     # --- requirements ---
