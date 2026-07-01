@@ -46,6 +46,7 @@ launching the GUI.
 | `imprint/srs.py` | Render a requirement set as an SRS (.docx), ISO/IEC/IEEE 29148 layout |
 | `imprint/assistant.py` | Embedded local AI assistant (Ollama) — drafts requirements offline |
 | `imprint/traceability.py` | Render requirements as a Traceability Matrix (.xlsx), V-Model view |
+| `imprint/user_stories.py` | Render requirements as Agile user stories (.docx), grouped by MoSCoW |
 | `imprint_app.py` | Tkinter desktop shell (create project, add/list requirements, generate SRS) |
 
 ## Roadmap
@@ -61,8 +62,9 @@ launching the GUI.
 - ✅ **v0.6** — **multi-requirement save** (checkbox picker captures every "The system shall…"
   line in a reply) + **Status column & baseline check-off** (double-click or button)
 - ✅ **v0.7** — **conversation persistence** — each project's assistant conversation is saved to
-  SQLite and resumes on reopen (no more re-asking the same questions) *(this build)*
-- 🔲 Agile user-story view (the third rendering of the same data)
+  SQLite and resumes on reopen (no more re-asking the same questions)
+- ✅ **v0.8** — **Agile user-story view** (.docx) — the third rendering; requirements become
+  "As a user, I want… so that…" stories grouped by MoSCoW priority *(this build)*
 - 🔲 Scope-drift **guardrail** (transplanted from Turbo)
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)
 - 🔲 Scope-drift **guardrail** (seeded from the Turbo engine)

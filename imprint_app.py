@@ -14,7 +14,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from imprint import db, models, srs, assistant, traceability
+from imprint import db, models, srs, assistant, traceability, user_stories
 
 # Larger, readable fonts (accessibility-first, like the Book Reader).
 FONT = ("Segoe UI", 12)
@@ -286,9 +286,12 @@ class ImprintApp(tk.Tk):
         self.gen_matrix_btn = ttk.Button(actions, text="📊 Traceability Matrix (.xlsx)",
                                          command=self._generate_matrix, state="disabled")
         self.gen_matrix_btn.grid(row=0, column=2, padx=(8, 0))
+        self.gen_stories_btn = ttk.Button(actions, text="📝 User Stories (.docx)",
+                                          command=self._generate_stories, state="disabled")
+        self.gen_stories_btn.grid(row=0, column=3, padx=(8, 0))
         self.baseline_btn = ttk.Button(actions, text="✓ Baseline / un-baseline",
                                        command=self._toggle_baseline, state="disabled")
-        self.baseline_btn.grid(row=0, column=3, padx=(8, 0))
+        self.baseline_btn.grid(row=0, column=4, padx=(8, 0))
 
     # --- assistant conversation panel ---
     def _build_assistant(self) -> ttk.LabelFrame:
@@ -474,6 +477,7 @@ class ImprintApp(tk.Tk):
         self.add_req_btn.config(state="normal")
         self.gen_srs_btn.config(state="normal")
         self.gen_matrix_btn.config(state="normal")
+        self.gen_stories_btn.config(state="normal")
         self.baseline_btn.config(state="normal")
         self._refresh_requirements()
         self._load_conversation()  # per-project saved conversation resumes here
@@ -567,6 +571,31 @@ class ImprintApp(tk.Tk):
             messagebox.showerror("Could not generate matrix", str(e))
             return
         if messagebox.askyesno("Traceability matrix generated", f"Saved:\n{out_path}\n\nOpen it now?"):
+            try:
+                os.startfile(out_path)
+            except Exception:
+                pass
+
+    def _generate_stories(self) -> None:
+        if self.current_project_id is None:
+            return
+        project = db.get_project(self.conn, self.current_project_id)
+        requirements = db.list_requirements(self.conn, self.current_project_id)
+        suggested = user_stories.default_output_path(project["name"])
+        out_path = filedialog.asksaveasfilename(
+            title="Save User Stories", defaultextension=".docx",
+            initialfile=os.path.basename(suggested),
+            initialdir=os.path.dirname(suggested),
+            filetypes=[("Word document", "*.docx")],
+        )
+        if not out_path:
+            return
+        try:
+            user_stories.build_user_stories(project, requirements, out_path)
+        except Exception as e:
+            messagebox.showerror("Could not generate user stories", str(e))
+            return
+        if messagebox.askyesno("User stories generated", f"Saved:\n{out_path}\n\nOpen it now?"):
             try:
                 os.startfile(out_path)
             except Exception:
