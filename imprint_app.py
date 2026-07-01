@@ -311,18 +311,66 @@ class ImprintApp(tk.Tk):
         self.save_reply_btn = ttk.Button(panel, text="➕ Save reply as requirement",
                                          command=self._save_reply_as_req, state="disabled")
         self.save_reply_btn.grid(row=1, column=2, padx=(8, 0), pady=(8, 0))
+        self.clear_chat_btn = ttk.Button(panel, text="🗑 Clear", command=self._clear_conversation,
+                                         state="disabled")
+        self.clear_chat_btn.grid(row=1, column=3, padx=(8, 0), pady=(8, 0))
 
+        # Input stays locked until a project is picked — the conversation is
+        # saved per-project, so it needs to know which project it belongs to.
+        self.chat_input.config(state="disabled")
+        self.send_btn.config(state="disabled")
         if self.assistant.available:
             self._chat_append("Assistant",
-                              "Hi! Tell me about your project and what it needs to do, "
-                              "and I'll help turn it into requirements.")
+                              "Select or create a project, then tell me about it — "
+                              "I'll help draft requirements and remember our conversation.")
         else:
             self._chat_append("Assistant",
                               f"(offline: {self.assistant.last_error}) "
                               "You can still add requirements manually.")
-            self.chat_input.config(state="disabled")
-            self.send_btn.config(state="disabled")
         return panel
+
+    def _clear_chat_log(self) -> None:
+        self.chat_log.config(state="normal")
+        self.chat_log.delete("1.0", "end")
+        self.chat_log.config(state="disabled")
+
+    def _load_conversation(self) -> None:
+        """Rebuild the chat panel from the selected project's saved conversation."""
+        self._clear_chat_log()
+        self.chat_history = []
+        self._last_reply = ""
+        if self.current_project_id is None:
+            return
+        if not self.assistant.available:
+            self._chat_append("Assistant", f"(offline: {self.assistant.last_error})")
+            return
+
+        messages = db.list_chat_messages(self.conn, self.current_project_id)
+        if not messages:
+            self._chat_append("Assistant",
+                              "Tell me about this project and what it needs to do, "
+                              "and I'll help turn it into requirements.")
+        else:
+            for m in messages:
+                self._chat_append("You" if m["role"] == "user" else "Assistant", m["content"])
+                self.chat_history.append({"role": m["role"], "content": m["content"]})
+                if m["role"] == "assistant":
+                    self._last_reply = m["content"]
+
+        self.chat_input.config(state="normal")
+        self.send_btn.config(state="normal")
+        self.clear_chat_btn.config(state="normal")
+        self.save_reply_btn.config(state="normal" if self._last_reply else "disabled")
+
+    def _clear_conversation(self) -> None:
+        if self.current_project_id is None:
+            return
+        if not messagebox.askyesno("Clear conversation",
+                                   "Delete the saved conversation for this project? "
+                                   "(Your saved requirements are not affected.)"):
+            return
+        db.clear_chat_messages(self.conn, self.current_project_id)
+        self._load_conversation()
 
     def _chat_append(self, who: str, text: str) -> None:
         self.chat_log.config(state="normal")
@@ -337,6 +385,8 @@ class ImprintApp(tk.Tk):
         self.chat_input.delete(0, "end")
         self._chat_append("You", msg)
         self.chat_history.append({"role": "user", "content": msg})
+        if self.current_project_id:
+            db.add_chat_message(self.conn, self.current_project_id, "user", msg)
         self.send_btn.config(state="disabled", text="Thinking…")
 
         project = db.get_project(self.conn, self.current_project_id) if self.current_project_id else None
@@ -356,6 +406,8 @@ class ImprintApp(tk.Tk):
             return
         self._last_reply = reply
         self.chat_history.append({"role": "assistant", "content": reply})
+        if self.current_project_id:
+            db.add_chat_message(self.conn, self.current_project_id, "assistant", reply)
         self._chat_append("Assistant", reply)
         self.save_reply_btn.config(state="normal" if self.current_project_id else "disabled")
 
@@ -423,9 +475,8 @@ class ImprintApp(tk.Tk):
         self.gen_srs_btn.config(state="normal")
         self.gen_matrix_btn.config(state="normal")
         self.baseline_btn.config(state="normal")
-        if self._last_reply:
-            self.save_reply_btn.config(state="normal")
         self._refresh_requirements()
+        self._load_conversation()  # per-project saved conversation resumes here
 
     # --- requirements ---
     @staticmethod

@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS requirement_links (
     link_type  TEXT NOT NULL DEFAULT 'traces_to',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,          -- 'user' or 'assistant'
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -208,3 +216,26 @@ def set_requirement_status(conn: sqlite3.Connection, req_id: int, status: str) -
             "UPDATE requirements SET status = ?, updated_at = ? WHERE id = ?",
             (status, now, req_id),
         )
+
+
+# --- assistant conversation (persisted per project) -------------------------
+def add_chat_message(conn: sqlite3.Connection, project_id: int, role: str, content: str) -> None:
+    """Persist one line of the assistant conversation for a project."""
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO chat_messages (project_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (project_id, role, content, _utc_now()),
+        )
+
+
+def list_chat_messages(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    """The full saved conversation for a project, oldest first."""
+    return conn.execute(
+        "SELECT * FROM chat_messages WHERE project_id = ? ORDER BY id",
+        (project_id,),
+    ).fetchall()
+
+
+def clear_chat_messages(conn: sqlite3.Connection, project_id: int) -> None:
+    with transaction(conn):
+        conn.execute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))

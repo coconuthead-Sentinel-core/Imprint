@@ -100,6 +100,33 @@ class TestImprintDb(unittest.TestCase):
         with self.assertRaises(ValueError):
             db.set_requirement_status(self.conn, r["id"], "done-ish")
 
+    def test_chat_messages_persist_and_scope_per_project(self):
+        a = db.create_project(self.conn, "A", "agile")
+        b = db.create_project(self.conn, "B", "waterfall")
+        db.add_chat_message(self.conn, a, "user", "what does it do?")
+        db.add_chat_message(self.conn, a, "assistant", "The system shall save conversations.")
+        db.add_chat_message(self.conn, b, "user", "different project")
+        msgs_a = db.list_chat_messages(self.conn, a)
+        self.assertEqual([m["role"] for m in msgs_a], ["user", "assistant"])
+        self.assertEqual(msgs_a[1]["content"], "The system shall save conversations.")
+        self.assertEqual(len(db.list_chat_messages(self.conn, b)), 1)  # not bunched together
+
+    def test_chat_survives_reconnect(self):
+        # Simulate close + reopen: same file, new connection, history still there.
+        pid = db.create_project(self.conn, "P", "agile")
+        db.add_chat_message(self.conn, pid, "user", "remember this")
+        self.conn.close()
+        conn2 = db.connect(self.path)
+        db.init_schema(conn2)
+        self.assertEqual(db.list_chat_messages(conn2, pid)[0]["content"], "remember this")
+        self.conn = conn2  # so tearDown closes it
+
+    def test_clear_chat_messages(self):
+        pid = db.create_project(self.conn, "P", "vmodel")
+        db.add_chat_message(self.conn, pid, "user", "x")
+        db.clear_chat_messages(self.conn, pid)
+        self.assertEqual(len(db.list_chat_messages(self.conn, pid)), 0)
+
     def test_models_vocabulary(self):
         self.assertTrue(models.is_valid_methodology("agile"))
         self.assertFalse(models.is_valid_methodology("scrumban"))
