@@ -10,10 +10,11 @@ Run:  py -3 imprint_app.py
 from __future__ import annotations
 
 import os
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from imprint import db, models, srs
+from imprint import db, models, srs, assistant
 
 # Larger, readable fonts (accessibility-first, like the Book Reader).
 FONT = ("Segoe UI", 12)
@@ -83,44 +84,85 @@ class ProjectDialog(tk.Toplevel):
 class RequirementDialog(tk.Toplevel):
     """Modal 'Add Requirement' form."""
 
-    def __init__(self, parent):
+    def __init__(self, parent, req_assistant=None):
         super().__init__(parent)
         self.title("Add Requirement")
         self.resizable(False, False)
         self.result: dict | None = None
+        self.assistant = req_assistant
         self.transient(parent)
         self.grab_set()
 
         frm = ttk.Frame(self, padding=16)
         frm.grid(sticky="nsew")
 
-        ttk.Label(frm, text="Statement", font=FONT_BOLD).grid(row=0, column=0, columnspan=2, sticky="w")
-        self.statement = tk.Text(frm, font=FONT, width=52, height=3, wrap="word")
-        self.statement.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 12))
+        header = ttk.Frame(frm)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Statement", font=FONT_BOLD).grid(row=0, column=0, sticky="w")
+        self.draft_btn = ttk.Button(header, text="✨ Draft with assistant", command=self._draft)
+        self.draft_btn.grid(row=0, column=1, sticky="e")
+        self.assist_status = ttk.Label(frm, text="", font=("Segoe UI", 10))
+        self.assist_status.grid(row=2, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frm, text="Type", font=FONT_BOLD).grid(row=2, column=0, sticky="w")
+        self.statement = tk.Text(frm, font=FONT, width=52, height=3, wrap="word")
+        self.statement.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 2))
+
+        ttk.Label(frm, text="Type", font=FONT_BOLD).grid(row=3, column=0, sticky="w")
         self.type_var = tk.StringVar(value=models.REQ_TYPES[0])
         ttk.Combobox(frm, textvariable=self.type_var, font=FONT, state="readonly",
-                     values=models.REQ_TYPES, width=22).grid(row=3, column=0, sticky="ew", padx=(0, 8))
+                     values=models.REQ_TYPES, width=22).grid(row=4, column=0, sticky="ew", padx=(0, 8))
 
-        ttk.Label(frm, text="Priority (MoSCoW)", font=FONT_BOLD).grid(row=2, column=1, sticky="w")
+        ttk.Label(frm, text="Priority (MoSCoW)", font=FONT_BOLD).grid(row=3, column=1, sticky="w")
         self.moscow_var = tk.StringVar(value=models.MOSCOW[0])
         ttk.Combobox(frm, textvariable=self.moscow_var, font=FONT, state="readonly",
-                     values=models.MOSCOW, width=22).grid(row=3, column=1, sticky="ew")
+                     values=models.MOSCOW, width=22).grid(row=4, column=1, sticky="ew")
 
-        ttk.Label(frm, text="Acceptance criteria", font=FONT_BOLD).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Label(frm, text="Acceptance criteria", font=FONT_BOLD).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
         self.accept = tk.Text(frm, font=FONT, width=52, height=3, wrap="word")
-        self.accept.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(2, 12))
+        self.accept.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(2, 12))
 
-        ttk.Label(frm, text="Source (optional)", font=FONT_BOLD).grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Label(frm, text="Source (optional)", font=FONT_BOLD).grid(row=7, column=0, columnspan=2, sticky="w")
         self.source_var = tk.StringVar()
         ttk.Entry(frm, textvariable=self.source_var, font=FONT, width=52).grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=(2, 12))
+            row=8, column=0, columnspan=2, sticky="ew", pady=(2, 12))
 
         btns = ttk.Frame(frm)
-        btns.grid(row=8, column=0, columnspan=2, sticky="e")
+        btns.grid(row=9, column=0, columnspan=2, sticky="e")
         ttk.Button(btns, text="Cancel", command=self.destroy).grid(row=0, column=0, padx=4)
         ttk.Button(btns, text="Save", command=self._on_save).grid(row=0, column=1)
+
+    # --- assistant: draft the requirement from the rough note, off the UI thread ---
+    def _draft(self) -> None:
+        note = self.statement.get("1.0", "end").strip()
+        if not note:
+            self.assist_status.config(text="Type a rough note first, then let the assistant polish it.")
+            return
+        if self.assistant is None or not self.assistant.available:
+            why = getattr(self.assistant, "last_error", "assistant unavailable")
+            self.assist_status.config(text=f"Assistant offline ({why}). You can still type it yourself.")
+            return
+        self.draft_btn.config(state="disabled")
+        self.assist_status.config(text="Thinking… (first reply can take a moment)")
+
+        def worker():
+            result = self.assistant.draft_requirement(note, project_name="")
+            # Hop back to the UI thread to touch widgets.
+            self.after(0, lambda: self._apply_draft(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_draft(self, result) -> None:
+        self.draft_btn.config(state="normal")
+        if not result or not result.get("statement"):
+            self.assist_status.config(text="Assistant couldn't draft that — try rewording, or type it yourself.")
+            return
+        self.statement.delete("1.0", "end")
+        self.statement.insert("1.0", result["statement"])
+        if result.get("acceptance_criteria"):
+            self.accept.delete("1.0", "end")
+            self.accept.insert("1.0", result["acceptance_criteria"])
+        self.assist_status.config(text="Drafted by the local assistant — review and edit before saving.")
 
     def _on_save(self) -> None:
         statement = self.statement.get("1.0", "end").strip()
@@ -147,6 +189,8 @@ class ImprintApp(tk.Tk):
         self.conn = db.connect()
         db.init_schema(self.conn)
         self.current_project_id: int | None = None
+        # One shared local assistant (checks Ollama once); reused by every dialog.
+        self.assistant = assistant.RequirementAssistant()
 
         self._build_ui()
         self._refresh_projects()
@@ -245,7 +289,7 @@ class ImprintApp(tk.Tk):
     def _add_requirement(self) -> None:
         if self.current_project_id is None:
             return
-        dlg = RequirementDialog(self)
+        dlg = RequirementDialog(self, self.assistant)
         self.wait_window(dlg)
         if dlg.result:
             try:
