@@ -14,7 +14,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from imprint import db, models, srs, assistant, traceability, user_stories
+from imprint import db, models, srs, assistant, traceability, user_stories, guardrail
 
 # Larger, readable fonts (accessibility-first, like the Book Reader).
 FONT = ("Segoe UI", 12)
@@ -211,6 +211,61 @@ class SaveRequirementsDialog(tk.Toplevel):
         self.destroy()
 
 
+class ScopeGuardDialog(tk.Toplevel):
+    """Shows scope drift vs the latest baseline; lets you lock a new baseline."""
+
+    ZONE_COLOR = {"GREEN": "#137333", "YELLOW": "#b06000", "RED": "#a50e0e"}
+
+    def __init__(self, parent, conn, project_id: int):
+        super().__init__(parent)
+        self.title("Scope Guard")
+        self.conn = conn
+        self.project_id = project_id
+        self.transient(parent)
+        self.grab_set()
+
+        frm = ttk.Frame(self, padding=16)
+        frm.grid(sticky="nsew")
+        ttk.Label(frm, text="🛡 Scope Guard — drift vs the baselined requirements",
+                  font=FONT_BOLD).grid(row=0, column=0, sticky="w")
+        self.report = tk.Text(frm, font=("Consolas", 11), width=74, height=16,
+                              wrap="word", state="disabled")
+        self.report.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky="e")
+        ttk.Button(btns, text="🔒 Lock baseline now", command=self._lock).grid(row=0, column=0, padx=4)
+        ttk.Button(btns, text="Close", command=self.destroy).grid(row=0, column=1)
+        self._render()
+
+    def _render(self) -> None:
+        base = db.get_latest_baseline(self.conn, self.project_id)
+        current = db.list_requirements(self.conn, self.project_id)
+        self.report.config(state="normal")
+        self.report.delete("1.0", "end")
+        if base is None:
+            self.report.insert(
+                "end",
+                "No baseline locked yet.\n\n"
+                "Lock a baseline to freeze the current requirement set as the agreed "
+                "scope. After that, Scope Guard shows what's been added, removed, or "
+                "changed — so the project can't quietly drift off-scope.")
+        else:
+            items = db.list_baseline_items(self.conn, base["id"])
+            report = guardrail.check_drift(current, items)
+            text = guardrail.summarize(report, base["created_at"])
+            self.report.insert("end", text)
+            # Colour the first line by zone.
+            self.report.tag_add("zone", "1.0", "1.end")
+            self.report.tag_config("zone", foreground=self.ZONE_COLOR.get(report["zone"], "black"),
+                                   font=("Consolas", 12, "bold"))
+        self.report.config(state="disabled")
+
+    def _lock(self) -> None:
+        db.lock_baseline(self.conn, self.project_id)
+        self._render()
+
+
 class ImprintApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -292,6 +347,9 @@ class ImprintApp(tk.Tk):
         self.baseline_btn = ttk.Button(actions, text="✓ Baseline / un-baseline",
                                        command=self._toggle_baseline, state="disabled")
         self.baseline_btn.grid(row=0, column=4, padx=(8, 0))
+        self.guard_btn = ttk.Button(actions, text="🛡 Scope Guard",
+                                    command=self._scope_guard, state="disabled")
+        self.guard_btn.grid(row=1, column=0, sticky="w", pady=(6, 0))
 
     # --- assistant conversation panel ---
     def _build_assistant(self) -> ttk.LabelFrame:
@@ -479,6 +537,7 @@ class ImprintApp(tk.Tk):
         self.gen_matrix_btn.config(state="normal")
         self.gen_stories_btn.config(state="normal")
         self.baseline_btn.config(state="normal")
+        self.guard_btn.config(state="normal")
         self._refresh_requirements()
         self._load_conversation()  # per-project saved conversation resumes here
 
@@ -498,6 +557,12 @@ class ImprintApp(tk.Tk):
             self.req_tree.insert("", "end", iid=str(r["id"]), values=(
                 r["req_key"], r["req_type"], r["moscow"],
                 self._status_display(r["status"]), r["statement"]))
+
+    def _scope_guard(self) -> None:
+        if self.current_project_id is None:
+            return
+        dlg = ScopeGuardDialog(self, self.conn, self.current_project_id)
+        self.wait_window(dlg)
 
     def _toggle_baseline(self) -> None:
         """Check off (baseline) or un-check the selected requirement(s)."""

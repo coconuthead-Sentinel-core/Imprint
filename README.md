@@ -47,6 +47,7 @@ launching the GUI.
 | `imprint/assistant.py` | Embedded local AI assistant (Ollama) — drafts requirements offline |
 | `imprint/traceability.py` | Render requirements as a Traceability Matrix (.xlsx), V-Model view |
 | `imprint/user_stories.py` | Render requirements as Agile user stories (.docx), grouped by MoSCoW |
+| `imprint/guardrail.py` | Scope-drift detection vs a baseline (added/removed/changed, GREEN/YELLOW/RED) |
 | `imprint_app.py` | Tkinter desktop shell (create project, add/list requirements, generate SRS) |
 
 ## Roadmap
@@ -64,8 +65,9 @@ launching the GUI.
 - ✅ **v0.7** — **conversation persistence** — each project's assistant conversation is saved to
   SQLite and resumes on reopen (no more re-asking the same questions)
 - ✅ **v0.8** — **Agile user-story view** (.docx) — the third rendering; requirements become
-  "As a user, I want… so that…" stories grouped by MoSCoW priority *(this build)*
-- 🔲 Scope-drift **guardrail** (transplanted from Turbo)
+  "As a user, I want… so that…" stories grouped by MoSCoW priority
+- ✅ **v0.9** — **Scope Guard** (concept transplanted from Turbo) — lock a baseline, then detect
+  scope drift (added / removed / changed) with GREEN / YELLOW / RED zones *(this build)*
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)
 - 🔲 Scope-drift **guardrail** (seeded from the Turbo engine)
 - 🔲 Embedded **local AI assistant** (shared local model via Ollama, seeded from Strata)

@@ -76,6 +76,20 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     content    TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS baselines (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS baseline_items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    baseline_id INTEGER NOT NULL REFERENCES baselines(id) ON DELETE CASCADE,
+    req_key     TEXT NOT NULL,
+    statement   TEXT NOT NULL,
+    moscow      TEXT NOT NULL
+);
 """
 
 
@@ -239,3 +253,34 @@ def list_chat_messages(conn: sqlite3.Connection, project_id: int) -> list[sqlite
 def clear_chat_messages(conn: sqlite3.Connection, project_id: int) -> None:
     with transaction(conn):
         conn.execute("DELETE FROM chat_messages WHERE project_id = ?", (project_id,))
+
+
+# --- scope baseline (snapshot the agreed requirement set) -------------------
+def lock_baseline(conn: sqlite3.Connection, project_id: int) -> int:
+    """Snapshot the project's current requirements as a new baseline; return its id."""
+    now = _utc_now()
+    with transaction(conn):
+        cur = conn.execute(
+            "INSERT INTO baselines (project_id, created_at) VALUES (?, ?)", (project_id, now))
+        baseline_id = int(cur.lastrowid)
+        rows = conn.execute(
+            "SELECT req_key, statement, moscow FROM requirements WHERE project_id = ?",
+            (project_id,)).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO baseline_items (baseline_id, req_key, statement, moscow) "
+                "VALUES (?, ?, ?, ?)",
+                (baseline_id, r["req_key"], r["statement"], r["moscow"]))
+    return baseline_id
+
+
+def get_latest_baseline(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM baselines WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+        (project_id,)).fetchone()
+
+
+def list_baseline_items(conn: sqlite3.Connection, baseline_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM baseline_items WHERE baseline_id = ? ORDER BY req_key",
+        (baseline_id,)).fetchall()
