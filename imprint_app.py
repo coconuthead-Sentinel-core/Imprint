@@ -392,6 +392,24 @@ class ImprintApp(tk.Tk):
                                          state="disabled")
         self.clear_chat_btn.grid(row=1, column=3, padx=(8, 0), pady=(8, 0))
 
+        # Row 2: context sources + document drafting. The checkboxes give
+        # the assistant eyes (web) and reading access (OneDrive/laptop
+        # files); 📄 writes real Word/Excel files. All work without a
+        # project selected — they're general-purpose.
+        srcrow = ttk.Frame(panel)
+        srcrow.grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        self.web_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(srcrow, text="🌐 Web search",
+                        variable=self.web_var).pack(side="left")
+        self.onedrive_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(srcrow, text="☁ OneDrive files",
+                        variable=self.onedrive_var,
+                        command=self._onedrive_toggled
+                        ).pack(side="left", padx=(12, 0))
+        ttk.Button(srcrow, text="📄 Draft document…",
+                   command=self._open_draft_dialog
+                   ).pack(side="left", padx=(16, 0))
+
         # Input stays locked until a project is picked — the conversation is
         # saved per-project, so it needs to know which project it belongs to.
         self.chat_input.config(state="disabled")
@@ -399,7 +417,10 @@ class ImprintApp(tk.Tk):
         if self.assistant.available:
             self._chat_append("Assistant",
                               "Select or create a project, then tell me about it — "
-                              "I'll help draft requirements and remember our conversation.")
+                              "I'll help draft requirements and remember our conversation. "
+                              "Ask me to \"search the web for …\" and I'll look things up "
+                              "online; check ☁ OneDrive files and I can read your documents; "
+                              "📄 Draft document writes real Word/Excel files for you.")
         else:
             self._chat_append("Assistant",
                               f"(offline: {self.assistant.last_error}) "
@@ -464,14 +485,38 @@ class ImprintApp(tk.Tk):
         self.chat_history.append({"role": "user", "content": msg})
         if self.current_project_id:
             db.add_chat_message(self.conn, self.current_project_id, "user", msg)
-        self.send_btn.config(state="disabled", text="Thinking…")
+        # Context sources: checked boxes, or natural phrasing — asking the
+        # assistant to search should just WORK.
+        use_web = bool(self.web_var.get())
+        use_onedrive = bool(self.onedrive_var.get())
+        low = msg.lower()
+        if not use_web:
+            for phrase in ("search the web", "search the internet",
+                           "search online", "web search", "look online",
+                           "look this up", "look up online",
+                           "check the internet", "check online",
+                           "google ", "on the internet"):
+                if phrase in low:
+                    use_web = True
+                    break
+        self.send_btn.config(state="disabled",
+                             text=("Searching…" if (use_web or use_onedrive)
+                                   else "Thinking…"))
 
         project = db.get_project(self.conn, self.current_project_id) if self.current_project_id else None
         pname = project["name"] if project else ""
         method = models.methodology_label(project["methodology"]) if project else ""
 
         def worker():
-            reply = self.assistant.chat(self.chat_history, pname, method)
+            parts = []
+            if use_onedrive:
+                parts.append(self._onedrive_context(msg))
+            if use_web:
+                from imprint.web_search import web_search_context
+                parts.append(web_search_context(msg))
+            ctx = "\n\n".join(part for part in parts if part)
+            reply = self.assistant.chat(self.chat_history, pname, method,
+                                        context=ctx)
             self.after(0, lambda: self._chat_receive(reply))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -487,6 +532,164 @@ class ImprintApp(tk.Tk):
             db.add_chat_message(self.conn, self.current_project_id, "assistant", reply)
         self._chat_append("Assistant", reply)
         self.save_reply_btn.config(state="normal" if self.current_project_id else "disabled")
+
+    # ---- ☁ OneDrive / laptop files for the assistant -------------------
+    # OneDrive is synced to disk, so this is plain LOCAL, read-only file
+    # retrieval — same cached-index design proven in Sentinel Forge.
+    def _onedrive_toggled(self) -> None:
+        if self.onedrive_var.get():
+            self._ensure_onedrive_index()
+
+    def _ensure_onedrive_index(self) -> None:
+        if getattr(self, "_onedrive_index", None) is not None:
+            return
+        if getattr(self, "_onedrive_building", False):
+            return
+        self._onedrive_building = True
+        self._chat_append("Assistant",
+                          "☁ Indexing your OneDrive files — the first time "
+                          "can take a few minutes; after that it's cached.")
+
+        def work():
+            from imprint import doc_index
+            try:
+                cache = os.path.join(doc_index.cache_dir(),
+                                     "onedrive_index.json")
+                idx = doc_index.build_index_over(doc_index.onedrive_root(),
+                                                 cache)
+                self._onedrive_index = idx
+                note = f"☁ OneDrive ready — {len(idx)} files searchable."
+            except Exception as e:
+                self._onedrive_index = []
+                note = f"☁ OneDrive indexing failed: {e}"
+            self._onedrive_building = False
+            self._chat_note(note)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _onedrive_context(self, query: str) -> str:
+        """Passages from the user's files relevant to the query — or an
+        honest note while the index is still building."""
+        index = getattr(self, "_onedrive_index", None)
+        if index is None:
+            try:
+                self.after(0, self._ensure_onedrive_index)
+            except Exception:
+                pass
+            return ("NOTE: the user's OneDrive files are still being "
+                    "indexed. Tell the user the file index is still "
+                    "building and to ask again in a few minutes.")
+        if not index:
+            return ""
+        from imprint.retrieval import retrieve_from_index
+        hits = retrieve_from_index(query, index)
+        return ("From the user's OneDrive files:\n" + hits) if hits else ""
+
+    def _chat_note(self, text: str) -> None:
+        """Thread-safe append of an Assistant line to the chat log."""
+        try:
+            self.after(0, lambda: self._chat_append("Assistant", text))
+        except Exception:
+            pass
+
+    # ---- 📄 Draft document (assistant writes real Word/Excel files) --
+    def _output_dir(self) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "output")
+
+    def _open_draft_dialog(self) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title("📄 Draft a document")
+        dlg.geometry("560x330")
+        dlg.transient(self)
+        ttk.Label(dlg, text="What should the assistant write?",
+                  font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 2))
+        ttk.Label(dlg, text=('e.g. "a budget for this project: hosting 60, '
+                             'domain 15, backups 10" or "a status memo '
+                             'summarizing this week'"'"'s progress"'),
+                  font=("Segoe UI", 10), wraplength=520, justify="left"
+                  ).pack(anchor="w", padx=14)
+        kind_var = tk.StringVar(value="xlsx")
+        krow = ttk.Frame(dlg)
+        krow.pack(fill="x", padx=14, pady=(8, 4))
+        ttk.Radiobutton(krow, text="📊 Excel spreadsheet (.xlsx)",
+                        value="xlsx", variable=kind_var).pack(side="left")
+        ttk.Radiobutton(krow, text="📝 Word document (.docx)",
+                        value="docx", variable=kind_var
+                        ).pack(side="left", padx=(14, 0))
+        box = tk.Text(dlg, font=FONT, height=5, wrap="word", undo=True)
+        box.pack(fill="both", expand=True, padx=14, pady=(4, 4))
+
+        def create():
+            request = box.get("1.0", "end").strip()
+            if not request:
+                messagebox.showinfo("Describe the document",
+                                    "Type what you want the assistant to "
+                                    "write.", parent=dlg)
+                return
+            kind = kind_var.get()
+            dlg.destroy()
+            threading.Thread(target=self._draft_doc_worker,
+                             args=(kind, request), daemon=True).start()
+
+        brow = ttk.Frame(dlg)
+        brow.pack(fill="x", padx=14, pady=(0, 12))
+        ttk.Button(brow, text="📄 Create document",
+                   command=create).pack(side="right")
+        ttk.Button(brow, text="Cancel",
+                   command=dlg.destroy).pack(side="left")
+        box.focus_set()
+
+    def _draft_doc_worker(self, kind: str, request: str) -> None:
+        """Background: model drafts -> real file written to output/ ->
+        opened. Honest chat feedback at every failure point."""
+        from imprint import doc_writer as dw
+        if not self.assistant.available:
+            self._chat_note("📄 I can't draft right now — the local AI "
+                            f"isn't available ({self.assistant.last_error}).")
+            return
+        self._chat_note("📄 Drafting your document…")
+        try:
+            if kind == "xlsx":
+                reply = self.assistant.ask(dw.sheet_prompt(request),
+                                           system=dw.SHEET_SYSTEM)
+                if dw.looks_like_refusal(reply or ""):
+                    reply = self.assistant.ask(
+                        "This is my own routine project paperwork. "
+                        + dw.sheet_prompt(request), system=dw.SHEET_SYSTEM)
+                title, headers, rows = dw.parse_table(reply or "")
+                if not rows:
+                    self._chat_note(
+                        "📄 I couldn't turn that into a table — try "
+                        'naming the columns and values plainly, e.g. '
+                        '"hosting 60, domain 15".')
+                    return
+                path = os.path.join(self._output_dir(),
+                                    dw.suggest_filename("xlsx", title))
+                dw.write_table_xlsx(path, title or "Sheet1", headers, rows)
+            else:
+                reply = self.assistant.ask(dw.letter_prompt(request),
+                                           system=dw.LETTER_SYSTEM)
+                if dw.looks_like_refusal(reply or ""):
+                    reply = self.assistant.ask(
+                        "This is my own routine correspondence. "
+                        + dw.letter_prompt(request), system=dw.LETTER_SYSTEM)
+                if not (reply or "").strip() or dw.looks_like_refusal(reply):
+                    self._chat_note("📄 The model declined to draft "
+                                    "that — try rewording the request.")
+                    return
+                title = " ".join(request.split()[:6])
+                path = os.path.join(self._output_dir(),
+                                    dw.suggest_filename("docx", title))
+                dw.write_letter_docx(path, None, reply)
+            self._chat_note(f"📄 Done — saved to {path}. Opening it "
+                            "now. Review before you use it.")
+            try:
+                os.startfile(path)
+            except Exception:
+                pass
+        except Exception as e:
+            self._chat_note(f"📄 Could not create the document: {e}")
 
     def _save_reply_as_req(self) -> None:
         if not self._last_reply or self.current_project_id is None:

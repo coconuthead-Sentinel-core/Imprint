@@ -155,19 +155,51 @@ class RequirementAssistant:
             "'The system shall ...' so it can be saved to the project. Keep replies short and concrete."
         )
 
-    def chat(self, history: list[dict], project_name: str = "", methodology: str = "") -> str | None:
-        """Continue a conversation. `history` is [{role, content}, ...]; returns the reply or None."""
+    def chat(self, history: list[dict], project_name: str = "",
+             methodology: str = "", context: str = "") -> str | None:
+        """Continue a conversation. `history` is [{role, content}, ...];
+        returns the reply or None. `context` is optional grounding text
+        (web-search results, passages from the user's OneDrive files) the
+        APP retrieved for this turn — the model itself never touches the
+        network or the disk."""
         if not self.available:
             return None
+        system = self._chat_system(project_name, methodology)
+        if context:
+            system += (
+                "\n\nUse the following context when it helps answer. If the "
+                "answer isn't in the context and you are unsure, say so "
+                "plainly instead of inventing details. Mention file names / "
+                "sources when useful.\n" + context[:6000])
         # Trim to the most recent turns so the small context window isn't overrun.
         recent = list(history)[-12:]
-        messages = [{"role": "system", "content": self._chat_system(project_name, methodology)}] + recent
+        messages = [{"role": "system", "content": system}] + recent
         try:
             resp = ollama.chat(
                 model=self.model,
                 messages=messages,
                 keep_alive=self.keep_alive,
                 options={"temperature": 0.5, "num_predict": 400, "num_ctx": self.num_ctx},
+            )
+            return resp["message"]["content"].strip()
+        except Exception as e:
+            self.last_error = f"{type(e).__name__}: {e}"
+            return None
+
+    def ask(self, prompt: str, system: str = "") -> str | None:
+        """One-shot ask with an explicit system prompt — the seam the
+        📄 document-drafting flow uses. Returns the reply or None."""
+        if not self.available:
+            return None
+        messages = ([{"role": "system", "content": system}] if system
+                    else []) + [{"role": "user", "content": prompt}]
+        try:
+            resp = ollama.chat(
+                model=self.model,
+                messages=messages,
+                keep_alive=self.keep_alive,
+                options={"temperature": 0.3, "num_predict": 700,
+                         "num_ctx": self.num_ctx},
             )
             return resp["message"]["content"].strip()
         except Exception as e:
