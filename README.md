@@ -93,3 +93,7 @@ py -3 -m unittest discover -s tests
 ```
 
 100% local. No cloud, no server, no API keys.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
