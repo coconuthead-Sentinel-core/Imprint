@@ -4,7 +4,7 @@
 > document. Imprint fills out your software-project paperwork (SRS and the rest of the
 > lifecycle documents) for you — 100% on your laptop, no cloud, no server, no API keys.
 
-![Status](https://img.shields.io/badge/status-v1.0-success)
+![Status](https://img.shields.io/badge/status-v1.1-success)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078d4.svg)
 
@@ -48,7 +48,11 @@ launching the GUI.
 | `imprint/traceability.py` | Render requirements as a Traceability Matrix (.xlsx), V-Model view |
 | `imprint/user_stories.py` | Render requirements as Agile user stories (.docx), grouped by MoSCoW |
 | `imprint/guardrail.py` | Scope-drift detection vs a baseline (added/removed/changed, GREEN/YELLOW/RED) |
-| `imprint_app.py` | Tkinter desktop shell (create project, add/list requirements, generate SRS) |
+| `imprint/web_search.py` | Web search for the assistant (DuckDuckGo, stdlib only — no key, no account) |
+| `imprint/doc_index.py` | Read-only indexer for local/OneDrive files (.docx, .pdf, .md, .txt, .html, .xlsx, .csv) |
+| `imprint/retrieval.py` | Pure ranking — picks the indexed passages most relevant to a question (RAG) |
+| `imprint/doc_writer.py` | Turns assistant text into real .docx letters and .xlsx tables (live formulas) |
+| `imprint_app.py` | Tkinter desktop shell — projects, requirements, document generation, assistant panel |
 
 ## Roadmap
 
@@ -57,7 +61,7 @@ launching the GUI.
 - ✅ **v0.3** — **embedded AI assistant** (local Ollama model, transplanted from Strata) drafts
   requirements from a rough note
 - ✅ **v0.4** — **Traceability Matrix (.xlsx)** — the V-Model view, columns from the Codex
-  Source Library template (`openpyxl`) *(this build)*
+  Source Library template (`openpyxl`)
 - ✅ **v0.5** — **Assistant conversation panel** — talk to the local model in the main window;
   it helps draft requirements and you save its replies straight into the project
 - ✅ **v0.6** — **multi-requirement save** (checkbox picker captures every "The system shall…"
@@ -69,10 +73,12 @@ launching the GUI.
 - ✅ **v0.9** — **Scope Guard** (concept transplanted from Turbo) — lock a baseline, then detect
   scope drift (added / removed / changed) with GREEN / YELLOW / RED zones
 - ✅ **v1.0** — **full CRUD**: edit & delete requirements (double-click to edit), delete a project
-  (cascades its requirements, conversation, and baselines) *(this build)*
+  (cascades its requirements, conversation, and baselines)
+- ✅ **v1.1** — **assistant context tools**: 🌐 web search (DuckDuckGo, no API key), ☁ read-only
+  index of local/OneDrive files the assistant can answer from, and 📄 document drafting —
+  the assistant's replies become real .docx letters and .xlsx tables with working formulas
+  *(this build)*
 - 🔲 Methodology profiles (Waterfall gate engine → V-Model traceability → Agile sprints)
-- 🔲 Scope-drift **guardrail** (seeded from the Turbo engine)
-- 🔲 Embedded **local AI assistant** (shared local model via Ollama, seeded from Strata)
 
 ## Run it
 

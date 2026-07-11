@@ -6,4 +6,4 @@ from here. Keeping logic out of the GUI is what lets the tests run without
 opening a window.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
